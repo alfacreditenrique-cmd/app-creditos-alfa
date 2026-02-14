@@ -16,7 +16,7 @@ TAB_NAME = 'Clientes'
 # --- USUARIOS (Contraseña 1234) ---
 USUARIOS = {
     # ADMIN
-    "alfacreditenrique@gmail.com": {"password": "Matriz_2025", "sucursal": "ADMINISTRADOR", "rol": "admin"},
+    "alfacreditenrique@gmail.com": {"password": "1234", "sucursal": "ADMINISTRADOR", "rol": "admin"},
     # GERENTES
     "gerenteesteli7@gmail.com": {"password": "1234", "sucursal": "Sucursal Esteli", "rol": "gerente"},
     "gerentemasaya25@gmail.com": {"password": "1234", "sucursal": "Sucursal Masaya", "rol": "gerente"},
@@ -32,10 +32,23 @@ USUARIOS = {
 # --- FUNCIONES ---
 
 def conectar_google_sheet():
-    creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
-    client = gspread.authorize(creds)
-    sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
-    return sheet
+    # LÓGICA HÍBRIDA: Funciona en Nube (Secrets) y en Local (Archivo)
+    try:
+        # Intentamos buscar en los secretos de Streamlit (NUBE)
+        if "gcp_service_account" in st.secrets:
+            creds_dict = st.secrets["gcp_service_account"]
+            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        else:
+            # Si no hay secretos, buscamos el archivo (LOCAL)
+            creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
+            
+        client = gspread.authorize(creds)
+        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+        return sheet
+        
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        st.stop()
 
 def cargar_datos(sheet):
     data = sheet.get_all_records()
@@ -46,27 +59,23 @@ def guardar_cambios(sheet, df_editado):
     st.info("Sincronizando con Google Sheets...")
     errores = 0
     
-    # Iteramos sobre el dataframe. 'i' será el índice original (ej. 10, 25, etc.)
     for i, row in df_editado.iterrows():
-        # CORRECCIÓN DEL ERROR "INDEX OUT OF BOUNDS":
-        # La fila en Excel es simplemente el índice + 2 (porque índice 0 es fila 2 en Excel)
+        # +2 porque gspread es base-1 y hay encabezado
         row_num = i + 2
         
         try:
-            # Recuperamos los valores de forma segura (por si el nombre cambia un poco)
             val_status = row.get('Status', '')
-            val_justif = row.get('Justificacion', row.get('Justificación', '')) # Prueba con y sin acento
+            val_justif = row.get('Justificacion', row.get('Justificación', ''))
             val_asig = row.get('Asignado_Colaborador', '')
             val_monto = row.get('Monto desembolsar', row.get('Monto Desembolsar', ''))
             
-            # Actualizamos las celdas (Columnas K, L, M, N)
-            # Verifica que estos números coincidan con tus columnas en Excel:
-            sheet.update_cell(row_num, 11, val_status)  # Col K (11)
-            sheet.update_cell(row_num, 12, val_justif)  # Col L (12)
-            sheet.update_cell(row_num, 13, val_asig)    # Col M (13)
-            sheet.update_cell(row_num, 14, val_monto)   # Col N (14)
+            # Actualizamos celdas (K, L, M, N)
+            sheet.update_cell(row_num, 11, val_status)  
+            sheet.update_cell(row_num, 12, val_justif)  
+            sheet.update_cell(row_num, 13, val_asig)    
+            sheet.update_cell(row_num, 14, val_monto)   
             
-            # Fecha Actualización (Col O -> 15)
+            # Fecha Actualización (Col O)
             fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             sheet.update_cell(row_num, 15, fecha_actual)
             
@@ -76,8 +85,9 @@ def guardar_cambios(sheet, df_editado):
             
     if errores == 0:
         st.success("¡Datos actualizados correctamente!")
+        st.rerun() # Recargar para ver cambios
     else:
-        st.warning(f"Se completó el proceso con {errores} errores. Revisa los mensajes arriba.")
+        st.warning(f"Se completó con {errores} errores.")
 
 # --- INTERFAZ ---
 
@@ -133,11 +143,10 @@ else:
             else:
                 df_filtrado = df.copy()
         else:
-            # Filtramos por Email_Gerente
             if 'Email_Gerente' in df.columns:
                 df_filtrado = df[df['Email_Gerente'] == user_email].copy()
             else:
-                st.error("⚠️ Error Crítico: No encuentro la columna 'Email_Gerente' en tu Excel.")
+                st.error("⚠️ Error: No encuentro la columna 'Email_Gerente'.")
                 st.stop()
 
         if not df_filtrado.empty:
@@ -167,13 +176,11 @@ else:
             
             if st.button("Guardar Cambios"):
                 if not df_editado.equals(df_filtrado):
-                    guardar_cambios(sheet, df_editado) # Ya no necesitamos indices_originales
-                    st.rerun()
+                    guardar_cambios(sheet, df_editado)
                 else:
                     st.info("No hay cambios pendientes.")
         else:
             st.warning("No tienes clientes asignados actualmente.")
 
     except Exception as e:
-
         st.error(f"Error general: {e}")
