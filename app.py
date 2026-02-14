@@ -16,7 +16,7 @@ TAB_NAME = 'Clientes'
 # --- USUARIOS (Contraseña 1234) ---
 USUARIOS = {
     # ADMIN
-    "alfacreditenrique@gmail.com": {"password": "1234", "sucursal": "ADMINISTRADOR", "rol": "admin"},
+    "alfacreditenrique@gmail.com": {"password": "Matriz_2025", "sucursal": "ADMINISTRADOR", "rol": "admin"},
     # GERENTES
     "gerenteesteli7@gmail.com": {"password": "1234", "sucursal": "Sucursal Esteli", "rol": "gerente"},
     "gerentemasaya25@gmail.com": {"password": "1234", "sucursal": "Sucursal Masaya", "rol": "gerente"},
@@ -175,4 +175,5 @@ else:
             st.warning("No tienes clientes asignados actualmente.")
 
     except Exception as e:
+
         st.error(f"Error general: {e}")
