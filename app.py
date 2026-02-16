@@ -51,9 +51,8 @@ SCOPES = [
 ]
 CREDS_FILE = 'credenciales.json'
 SHEET_NAME = 'base de datos'
-# Nombres de las pestañas en tu Google Sheet
 TAB_CLIENTES = 'Clientes'
-TAB_HISTORICO = 'Historico' # Asegúrate que en tu Excel se llame así (sin tilde o con tilde según tu archivo)
+TAB_HISTORICO = 'Historico' 
 
 # --- USUARIOS ---
 USUARIOS = {
@@ -72,7 +71,6 @@ USUARIOS = {
 # --- FUNCIONES ---
 
 def conectar_google_sheet(nombre_pestaña):
-    """Conecta a una pestaña específica (Clientes o Historico)"""
     try:
         if "gcp_service_account" in st.secrets:
             creds_dict = st.secrets["gcp_service_account"]
@@ -81,7 +79,6 @@ def conectar_google_sheet(nombre_pestaña):
             creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
             
         client = gspread.authorize(creds)
-        # Aquí abrimos la pestaña que solicite el usuario
         sheet = client.open(SHEET_NAME).worksheet(nombre_pestaña)
         return sheet
     except Exception as e:
@@ -91,7 +88,6 @@ def conectar_google_sheet(nombre_pestaña):
 def cargar_datos(sheet):
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
-    # Convertimos todo a string para evitar errores de visualización
     return df.astype(str)
 
 def limpiar_moneda(valor):
@@ -202,7 +198,6 @@ else:
         st.title("📊 Gestión del Día")
         
         try:
-            # Conectamos a la pestaña 'Clientes'
             sheet = conectar_google_sheet(TAB_CLIENTES)
             df = cargar_datos(sheet)
             
@@ -219,36 +214,43 @@ else:
                     st.stop()
 
             if not df_filtrado.empty:
-                # KPIs
+                # 1. CÁLCULOS KPI
                 col_monto = 'Monto desembolsar' if 'Monto desembolsar' in df_filtrado.columns else 'Monto Desembolsar'
                 df_filtrado['Monto_Num'] = df_filtrado[col_monto].apply(limpiar_moneda)
                 
-                kpi1, kpi2, kpi3 = st.columns(3)
-                kpi1.metric("Clientes Activos", len(df_filtrado))
-                kpi2.metric("Monto Desembolsado", f"C$ {df_filtrado['Monto_Num'].sum():,.2f}")
+                total_clientes = len(df_filtrado)
+                total_dinero = df_filtrado['Monto_Num'].sum()
                 desembolsados = len(df_filtrado[df_filtrado['Status'] == 'Desembolsado'])
-                tasa = (desembolsados / len(df_filtrado) * 100) if len(df_filtrado) > 0 else 0
+                tasa = (desembolsados / total_clientes * 100) if total_clientes > 0 else 0
+                
+                # 2. MOSTRAR KPIs
+                kpi1, kpi2, kpi3 = st.columns(3)
+                kpi1.metric("Clientes Activos", total_clientes)
+                kpi2.metric("Monto Desembolsado", f"C$ {total_dinero:,.2f}")
                 kpi3.metric("Efectividad", f"{tasa:.1f}%")
                 
                 st.markdown("---")
                 
-                # GRÁFICOS
+                # 3. GRÁFICOS
                 g1, g2 = st.columns(2)
                 conteo_status = df_filtrado['Status'].value_counts().reset_index()
                 conteo_status.columns = ['Estado', 'Cantidad']
                 
                 with g1:
+                    st.subheader("Distribución")
                     fig_pie = px.pie(conteo_status, values='Cantidad', names='Estado', hole=0.4, color_discrete_sequence=px.colors.sequential.Greens_r)
                     fig_pie.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
                     st.plotly_chart(fig_pie, use_container_width=True)
                 with g2:
+                    st.subheader("Cantidad")
                     fig_bar = px.bar(conteo_status, x='Estado', y='Cantidad', color='Estado', color_discrete_sequence=px.colors.sequential.Greens_r)
                     fig_bar.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
                     st.plotly_chart(fig_bar, use_container_width=True)
 
+                st.markdown("---")
                 st.subheader("📝 Edición de Datos")
                 
-                # TABLA EDITABLE
+                # 4. TABLA EDITABLE
                 column_config = {
                     "Status": st.column_config.SelectboxColumn("Status", options=["Proceso", "Denegado", "Desembolsado", "Pendiente"], required=True),
                     "Monto desembolsar": st.column_config.NumberColumn("Monto Desembolso", format="C$ %.2f")
@@ -272,25 +274,25 @@ else:
             st.error(f"Error: {e}")
 
     # ---------------------------------------------------------
-    # PÁGINA 2: HISTÓRICO (SOLO LECTURA)
+    # PÁGINA 2: HISTÓRICO (SOLO LECTURA + GRÁFICOS)
     # ---------------------------------------------------------
     elif menu_seleccion == "Histórico de Clientes":
         st.title("📂 Histórico de Operaciones")
         st.markdown("Consulta de registros antiguos. **(Modo Solo Lectura)**")
         
         try:
-            # Conectamos a la pestaña 'Historico'
-            # Asegúrate que la variable TAB_HISTORICO tenga el nombre exacto de tu hoja
             sheet_hist = conectar_google_sheet(TAB_HISTORICO)
             df_hist = cargar_datos(sheet_hist)
             
-            # APLICAMOS LA MISMA SEGURIDAD DE FILTRADO
+            # FILTRADO HISTÓRICO
             if es_admin:
-                sucursales_hist = ["Todas"] + list(df_hist['Sucursal'].unique()) if 'Sucursal' in df_hist.columns else ["Todas"]
-                filtro_hist = st.selectbox("Filtrar Histórico por Sucursal", sucursales_hist)
-                if filtro_hist != "Todas":
-                    df_view = df_hist[df_hist['Sucursal'] == filtro_hist]
+                # Verificamos si existe la columna Sucursal antes de intentar filtrar
+                if 'Sucursal' in df_hist.columns:
+                    sucursales_hist = ["Todas"] + list(df_hist['Sucursal'].unique())
+                    filtro_hist = st.selectbox("Filtrar Histórico por Sucursal", sucursales_hist)
+                    df_view = df_hist[df_hist['Sucursal'] == filtro_hist] if filtro_hist != "Todas" else df_hist
                 else:
+                    st.warning("El Histórico no tiene columna 'Sucursal'. Se muestran todos los datos.")
                     df_view = df_hist
             else:
                 if 'Email_Gerente' in df_hist.columns:
@@ -300,17 +302,65 @@ else:
                     df_view = pd.DataFrame()
 
             if not df_view.empty:
-                st.info(f"Mostrando {len(df_view)} registros históricos.")
+                # --- AQUÍ AGREGAMOS LOS GRÁFICOS AL HISTÓRICO ---
                 
-                # Buscador simple
-                busqueda = st.text_input("🔍 Buscar cliente en histórico (Nombre, Cédula, Teléfono...)", "")
+                # 1. CÁLCULOS KPI (Igual que en activa)
+                col_monto_hist = 'Monto desembolsar' if 'Monto desembolsar' in df_view.columns else 'Monto Desembolsar'
+                
+                # Verificamos si existe la columna de montos antes de calcular
+                if col_monto_hist in df_view.columns:
+                    df_view['Monto_Num'] = df_view[col_monto_hist].apply(limpiar_moneda)
+                    total_dinero_hist = df_view['Monto_Num'].sum()
+                else:
+                    total_dinero_hist = 0
+
+                total_clientes_hist = len(df_view)
+                
+                if 'Status' in df_view.columns:
+                    desembolsados_hist = len(df_view[df_view['Status'] == 'Desembolsado'])
+                    tasa_hist = (desembolsados_hist / total_clientes_hist * 100) if total_clientes_hist > 0 else 0
+                else:
+                    tasa_hist = 0
+
+                # 2. MOSTRAR KPIs
+                kpi_h1, kpi_h2, kpi_h3 = st.columns(3)
+                kpi_h1.metric("Total Histórico", total_clientes_hist)
+                kpi_h2.metric("Monto Histórico", f"C$ {total_dinero_hist:,.2f}")
+                kpi_h3.metric("Tasa Global", f"{tasa_hist:.1f}%")
+                
+                st.markdown("---")
+
+                # 3. GRÁFICOS
+                if 'Status' in df_view.columns:
+                    g_h1, g_h2 = st.columns(2)
+                    conteo_status_hist = df_view['Status'].value_counts().reset_index()
+                    conteo_status_hist.columns = ['Estado', 'Cantidad']
+                    
+                    with g_h1:
+                        st.subheader("Distribución Histórica")
+                        fig_pie_h = px.pie(conteo_status_hist, values='Cantidad', names='Estado', hole=0.4, color_discrete_sequence=px.colors.sequential.Greens_r)
+                        fig_pie_h.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
+                        st.plotly_chart(fig_pie_h, use_container_width=True)
+                    with g_h2:
+                        st.subheader("Volumen por Estado")
+                        fig_bar_h = px.bar(conteo_status_hist, x='Estado', y='Cantidad', color='Estado', color_discrete_sequence=px.colors.sequential.Greens_r)
+                        fig_bar_h.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
+                        st.plotly_chart(fig_bar_h, use_container_width=True)
+
+                st.markdown("---")
+                
+                # 4. TABLA DE BÚSQUEDA (SOLO LECTURA)
+                st.subheader("🔍 Detalle de Registros")
+                busqueda = st.text_input("Buscar en histórico...", "")
+                
                 if busqueda:
                     mask = df_view.apply(lambda x: x.astype(str).str.contains(busqueda, case=False).any(), axis=1)
-                    df_view = df_view[mask]
+                    df_final = df_view[mask]
+                else:
+                    df_final = df_view
 
-                # Usamos st.dataframe en lugar de data_editor para que NO SE PUEDA EDITAR
                 st.dataframe(
-                    df_view, 
+                    df_final, 
                     use_container_width=True, 
                     hide_index=True,
                     height=600
@@ -319,4 +369,4 @@ else:
                 st.warning("No se encontraron registros en el histórico.")
                 
         except Exception as e:
-            st.error(f"No se pudo cargar el histórico. Verifica que la pestaña se llame '{TAB_HISTORICO}' en el Excel. Error: {e}")
+            st.error(f"Error cargando histórico: {e}")
