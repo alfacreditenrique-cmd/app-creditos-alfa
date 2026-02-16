@@ -3,7 +3,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
-import plotly.express as px  # <--- NUEVA LIBRERÍA PARA GRÁFICAS
+import plotly.express as px
 
 # --- CONFIGURACIÓN ---
 SCOPES = [
@@ -16,9 +16,7 @@ TAB_NAME = 'Clientes'
 
 # --- USUARIOS (Contraseña 1234) ---
 USUARIOS = {
-    # ADMIN
     "alfacreditenrique@gmail.com": {"password": "1234", "sucursal": "ADMINISTRADOR", "rol": "admin"},
-    # GERENTES
     "gerenteesteli7@gmail.com": {"password": "1234", "sucursal": "Sucursal Esteli", "rol": "gerente"},
     "gerentemasaya25@gmail.com": {"password": "1234", "sucursal": "Sucursal Masaya", "rol": "gerente"},
     "gerenterivas1@gmail.com": {"password": "1234", "sucursal": "Sucursal Rivas", "rol": "gerente"},
@@ -53,9 +51,7 @@ def cargar_datos(sheet):
     return df
 
 def limpiar_moneda(valor):
-    """Convierte texto como 'C$ 5,000' a número 5000.0"""
     if isinstance(valor, str):
-        # Quitamos símbolo, comas y espacios
         limpio = valor.replace('C$', '').replace(',', '').strip()
         if limpio == '': return 0.0
         try:
@@ -64,25 +60,37 @@ def limpiar_moneda(valor):
             return 0.0
     return float(valor or 0)
 
-def guardar_cambios(sheet, df_editado):
+def guardar_cambios(sheet, df_editado, es_admin):
     st.info("Sincronizando con Google Sheets...")
     errores = 0
     
     for i, row in df_editado.iterrows():
         row_num = i + 2
         try:
-            val_status = row.get('Status', '')
-            val_justif = row.get('Justificacion', row.get('Justificación', ''))
-            val_asig = row.get('Asignado_Colaborador', '')
-            val_monto = row.get('Monto desembolsar', row.get('Monto Desembolsar', ''))
+            # 1. ACTUALIZACIÓN ESTÁNDAR (Lo que tocan los Gerentes)
+            # Columnas K, L, M, N (Indices 11, 12, 13, 14)
+            sheet.update_cell(row_num, 11, row.get('Status', ''))  
+            sheet.update_cell(row_num, 12, row.get('Justificacion', row.get('Justificación', '')))  
+            sheet.update_cell(row_num, 13, row.get('Asignado_Colaborador', ''))    
+            sheet.update_cell(row_num, 14, row.get('Monto desembolsar', row.get('Monto Desembolsar', '')))   
             
-            sheet.update_cell(row_num, 11, val_status)  
-            sheet.update_cell(row_num, 12, val_justif)  
-            sheet.update_cell(row_num, 13, val_asig)    
-            sheet.update_cell(row_num, 14, val_monto)   
-            
+            # Fecha Actualización (Col O -> 15)
             fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             sheet.update_cell(row_num, 15, fecha_actual)
+
+            # 2. ACTUALIZACIÓN DE ADMIN (Si el admin cambia nombres, teléfonos, etc.)
+            if es_admin:
+                # Actualizamos columnas A-J solo si es Admin para evitar lentitud innecesaria
+                # Mapeo basado en tu imagen:
+                sheet.update_cell(row_num, 1, row.get('Agente Call Center', ''))
+                sheet.update_cell(row_num, 2, row.get('Fecha Reporte', ''))
+                sheet.update_cell(row_num, 3, row.get('Nombre_Completo', ''))
+                sheet.update_cell(row_num, 4, row.get('Tipo de credito', ''))
+                sheet.update_cell(row_num, 5, row.get('Telefono', ''))
+                sheet.update_cell(row_num, 6, row.get('Direccion_Negocio', ''))
+                sheet.update_cell(row_num, 7, row.get('Tipo_Negocio', ''))
+                # Email y Sucursal (8 y 9) y Monto Solicitado (10)
+                sheet.update_cell(row_num, 10, row.get('Monto Solicitado', ''))
             
         except Exception as e:
             errores += 1
@@ -128,7 +136,6 @@ else:
     user_data = st.session_state['datos_usuario']
     es_admin = user_data['rol'] == 'admin'
     
-    # Barra lateral
     st.sidebar.title(f"👤 {user_data['sucursal']}")
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state['logueado'] = False
@@ -138,9 +145,9 @@ else:
         sheet = conectar_google_sheet()
         df = cargar_datos(sheet)
         
-        # --- FILTRADO DE DATOS ---
+        # --- FILTRADO ---
         if es_admin:
-            st.info("Vista de Administrador: Acceso Total")
+            st.info("Vista de Administrador: Acceso Total de Edición")
             filtro_sucursal = st.selectbox("Filtrar por Sucursal", ["Todas"] + list(df['Sucursal'].unique()))
             if filtro_sucursal != "Todas":
                 df_filtrado = df[df['Sucursal'] == filtro_sucursal].copy()
@@ -155,54 +162,41 @@ else:
 
         if not df_filtrado.empty:
             
-            # --- SECCIÓN DE MÉTRICAS Y GRÁFICAS (NUEVO) ---
-            
-            # 1. Limpieza de datos para cálculos
-            # Creamos una columna temporal numérica para sumar el dinero
+            # --- KPI & GRÁFICAS ---
             col_monto = 'Monto desembolsar' if 'Monto desembolsar' in df_filtrado.columns else 'Monto Desembolsar'
             df_filtrado['Monto_Num'] = df_filtrado[col_monto].apply(limpiar_moneda)
             
-            # 2. Cálculos
             total_clientes = len(df_filtrado)
             total_dinero = df_filtrado['Monto_Num'].sum()
             conteo_status = df_filtrado['Status'].value_counts().reset_index()
             conteo_status.columns = ['Estado', 'Cantidad']
             
-            # 3. Tarjetas de Resumen (KPIs)
             kpi1, kpi2, kpi3 = st.columns(3)
             kpi1.metric("Clientes Totales", total_clientes)
-            kpi2.metric("Dinero Desembolsado (Aprox)", f"C$ {total_dinero:,.2f}")
-            
-            # KPI 3: Tasa de Aprobación
+            kpi2.metric("Dinero Desembolsado", f"C$ {total_dinero:,.2f}")
             desembolsados = len(df_filtrado[df_filtrado['Status'] == 'Desembolsado'])
             tasa = (desembolsados / total_clientes * 100) if total_clientes > 0 else 0
             kpi3.metric("Tasa de Desembolso", f"{tasa:.1f}%")
             
             st.markdown("---")
             
-            # 4. Gráficos
             g1, g2 = st.columns(2)
-            
             with g1:
                 st.subheader("Distribución por Estado")
-                # Gráfico de Pastel
                 fig_pie = px.pie(conteo_status, values='Cantidad', names='Estado', hole=0.4)
                 st.plotly_chart(fig_pie, use_container_width=True)
-                
             with g2:
                 st.subheader("Cantidad de Clientes")
-                # Gráfico de Barras
                 fig_bar = px.bar(conteo_status, x='Estado', y='Cantidad', color='Estado')
                 st.plotly_chart(fig_bar, use_container_width=True)
 
             st.markdown("---")
             st.subheader("📋 Edición de Datos")
 
-            # --- TABLA DE EDICIÓN (IGUAL QUE ANTES) ---
+            # --- CONFIGURACIÓN DE COLUMNAS (PERMISOS) ---
+            
+            # 1. Definimos las columnas base (Editables K+)
             column_config = {
-                "Email_Gerente": st.column_config.TextColumn(disabled=True),
-                "Sucursal": st.column_config.TextColumn(disabled=True),
-                "Monto Solicitado": st.column_config.TextColumn(disabled=True), 
                 "Status": st.column_config.SelectboxColumn(
                     "Status",
                     options=["Proceso", "Denegado", "Desembolsado", "Pendiente"],
@@ -210,7 +204,22 @@ else:
                 ),
                 "Monto desembolsar": st.column_config.NumberColumn("Monto Desembolso", format="C$ %.2f")
             }
-            
+
+            # 2. Lista de Columnas que los Gerentes NO deben tocar (A-J)
+            # Asegúrate que los nombres sean EXACTOS a los de tu Excel
+            cols_bloqueadas_gerente = [
+                "Agente Call Center", "Fecha Reporte", "Nombre_Completo", 
+                "Tipo de credito", "Telefono", "Direccion_Negocio", 
+                "Tipo_Negocio", "Email_Gerente", "Sucursal", "Monto Solicitado"
+            ]
+
+            # 3. Aplicamos la lógica: Si es Admin -> False (Editable), Si es Gerente -> True (Bloqueado)
+            estado_bloqueo = False if es_admin else True
+
+            for col in cols_bloqueadas_gerente:
+                column_config[col] = st.column_config.TextColumn(disabled=estado_bloqueo)
+
+            # Mostramos la tabla
             df_editado = st.data_editor(
                 df_filtrado,
                 column_config=column_config,
@@ -222,7 +231,8 @@ else:
             
             if st.button("Guardar Cambios", type="primary"):
                 if not df_editado.equals(df_filtrado):
-                    guardar_cambios(sheet, df_editado)
+                    # Pasamos 'es_admin' a la función para saber si guardamos todo o solo status
+                    guardar_cambios(sheet, df_editado, es_admin)
                 else:
                     st.info("No hay cambios pendientes.")
         else:
