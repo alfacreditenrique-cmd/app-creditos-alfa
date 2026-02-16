@@ -6,75 +6,41 @@ from datetime import datetime
 import plotly.express as px
 import os
 
-# --- CONFIGURACIÓN DE LA PÁGINA (DEBE IR AL PRINCIPIO) ---
+# --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="AlfaCredit S.A. - Gestión",
+    page_title="AlfaCredit S.A.",
     page_icon="✅",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- ESTILOS PERSONALIZADOS (CSS) ---
-# Aquí definimos el diseño "AlfaCredit Dark Mode"
+# --- ESTILOS PERSONALIZADOS (CSS MODO OSCURO) ---
 st.markdown("""
     <style>
-    /* 1. Fondo Principal Negro Puro */
-    .stApp {
-        background-color: #000000;
-    }
+    /* Fondo y Textos */
+    .stApp { background-color: #000000; }
+    [data-testid="stSidebar"] { background-color: #121212; border-right: 1px solid #333; }
+    h1, h2, h3, h4 { color: #2ecc71 !important; font-family: 'Arial', sans-serif; }
+    p, label, span, div { color: #e0e0e0; }
     
-    /* 2. Barra Lateral (Gris muy oscuro para contraste) */
-    [data-testid="stSidebar"] {
-        background-color: #121212;
-        border-right: 1px solid #333;
-    }
-
-    /* 3. Títulos y Encabezados en Verde AlfaCredit */
-    h1, h2, h3, h4 {
-        color: #2ecc71 !important; /* Verde Esmeralda Vibrante */
-        font-family: 'Arial', sans-serif;
-    }
-
-    /* 4. Textos Generales en Blanco */
-    p, label, span, div {
-        color: #e0e0e0;
-    }
-
-    /* 5. Métricas (KPIs) */
-    [data-testid="stMetricValue"] {
-        color: #ffffff !important;
-        font-weight: bold;
-    }
-    [data-testid="stMetricLabel"] {
-        color: #2ecc71 !important; /* Etiqueta verde */
-    }
-    [data-testid="stMetricDelta"] {
-        color: #cccccc !important;
-    }
-
-    /* 6. Botones (Verdes con texto blanco) */
+    /* Métricas */
+    [data-testid="stMetricValue"] { color: #ffffff !important; font-weight: bold; }
+    [data-testid="stMetricLabel"] { color: #2ecc71 !important; }
+    
+    /* Botones */
     div.stButton > button:first-child {
-        background-color: #27ae60;
-        color: white;
-        border-radius: 8px;
-        border: none;
-        font-weight: bold;
-        transition: 0.3s;
+        background-color: #27ae60; color: white; border-radius: 8px; border: none; font-weight: bold;
     }
     div.stButton > button:first-child:hover {
-        background-color: #2ecc71; /* Verde más claro al pasar mouse */
-        box-shadow: 0 0 10px #2ecc71;
+        background-color: #2ecc71; box-shadow: 0 0 10px #2ecc71;
     }
-
-    /* 7. Inputs y Tablas */
-    .stTextInput > div > div > input {
-        color: white;
-        background-color: #1e1e1e;
-        border: 1px solid #444;
-    }
-    [data-testid="stDataFrame"] {
-        border: 1px solid #333;
-    }
+    
+    /* Radio Button (Menú) */
+    .stRadio > div { flex-direction: column; }
+    .stRadio > label { color: white !important; font-weight: bold; }
+    
+    /* Tablas */
+    [data-testid="stDataFrame"] { border: 1px solid #333; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -85,10 +51,11 @@ SCOPES = [
 ]
 CREDS_FILE = 'credenciales.json'
 SHEET_NAME = 'base de datos'
-TAB_NAME = 'Clientes'
+# Nombres de las pestañas en tu Google Sheet
+TAB_CLIENTES = 'Clientes'
+TAB_HISTORICO = 'Historico' # Asegúrate que en tu Excel se llame así (sin tilde o con tilde según tu archivo)
 
 # --- USUARIOS ---
-# He corregido el patrón de contraseñas para evitar errores de acceso
 USUARIOS = {
     "alfacreditenrique@gmail.com": {"password": "Matriz,_2025", "sucursal": "ADMINISTRADOR", "rol": "admin"},
     "gerenteesteli7@gmail.com": {"password": "gerenteesteli7@gerenteesteli7", "sucursal": "Sucursal Esteli", "rol": "gerente"},
@@ -104,7 +71,8 @@ USUARIOS = {
 
 # --- FUNCIONES ---
 
-def conectar_google_sheet():
+def conectar_google_sheet(nombre_pestaña):
+    """Conecta a una pestaña específica (Clientes o Historico)"""
     try:
         if "gcp_service_account" in st.secrets:
             creds_dict = st.secrets["gcp_service_account"]
@@ -113,16 +81,18 @@ def conectar_google_sheet():
             creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
             
         client = gspread.authorize(creds)
-        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+        # Aquí abrimos la pestaña que solicite el usuario
+        sheet = client.open(SHEET_NAME).worksheet(nombre_pestaña)
         return sheet
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
+        st.error(f"Error de conexión con la hoja '{nombre_pestaña}': {e}")
         st.stop()
 
 def cargar_datos(sheet):
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
-    return df
+    # Convertimos todo a string para evitar errores de visualización
+    return df.astype(str)
 
 def limpiar_moneda(valor):
     if isinstance(valor, str):
@@ -140,7 +110,7 @@ def guardar_cambios(sheet, df_editado, es_admin):
         for i, row in df_editado.iterrows():
             row_num = i + 2
             try:
-                # 1. ACTUALIZACIÓN ESTÁNDAR
+                # Actualización Estándar
                 sheet.update_cell(row_num, 11, row.get('Status', ''))  
                 sheet.update_cell(row_num, 12, row.get('Justificacion', row.get('Justificación', '')))  
                 sheet.update_cell(row_num, 13, row.get('Asignado_Colaborador', ''))    
@@ -149,7 +119,7 @@ def guardar_cambios(sheet, df_editado, es_admin):
                 fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 sheet.update_cell(row_num, 15, fecha_actual)
 
-                # 2. ACTUALIZACIÓN ADMIN
+                # Actualización Admin
                 if es_admin:
                     sheet.update_cell(row_num, 1, row.get('Agente Call Center', ''))
                     sheet.update_cell(row_num, 2, row.get('Fecha Reporte', ''))
@@ -172,23 +142,22 @@ def guardar_cambios(sheet, df_editado, es_admin):
 
 # --- INTERFAZ ---
 
-# 1. LOGIN
 if 'logueado' not in st.session_state:
     st.session_state['logueado'] = False
 
+# 1. LOGIN
 if not st.session_state['logueado']:
-    # Diseño de Login Centrado y Bonito
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("<h1 style='text-align: center; color: #2ecc71;'>AlfaCredit S.A.</h1>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; color: white;'>Sistema de Gestión de Créditos</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center; color: white;'>Sistema de Gestión</h4>", unsafe_allow_html=True)
         st.markdown("<hr>", unsafe_allow_html=True)
         
         with st.form("login_form"):
             usuario = st.text_input("📧 Correo Institucional")
             password = st.text_input("🔑 Contraseña", type="password")
-            submit = st.form_submit_button("INGRESAR AL SISTEMA")
+            submit = st.form_submit_button("INGRESAR")
             
             if submit:
                 usuario = usuario.strip().lower() 
@@ -206,140 +175,148 @@ else:
     user_data = st.session_state['datos_usuario']
     es_admin = user_data['rol'] == 'admin'
     
-    # --- BARRA LATERAL CON LOGO ---
+    # --- BARRA LATERAL ---
     with st.sidebar:
-        # Intentamos mostrar el logo si existe
         if os.path.exists("logo.png"):
             st.image("logo.png", width=200)
         else:
-            # Placeholder elegante si no hay logo aun
             st.markdown("<h1 style='color: #2ecc71;'>ALFACREDIT</h1>", unsafe_allow_html=True)
             
+        st.write(f"👤 **{user_data['sucursal']}**")
         st.markdown("---")
-        st.write(f"👤 **Usuario:** {user_data['sucursal']}")
-        st.write(f"📧 **Correo:** {user_email}")
+        
+        # MENÚ DE NAVEGACIÓN
+        menu_seleccion = st.radio("📍 Navegación", ["Gestión Activa", "Histórico de Clientes"])
+        
         st.markdown("---")
         if st.button("🔒 Cerrar Sesión"):
             st.session_state['logueado'] = False
             st.rerun()
 
-    # --- CONTENIDO PRINCIPAL ---
-    st.title("📊 Dashboard de Créditos")
-    st.markdown(f"Bienvenido, **{user_data['sucursal']}**")
-
-    try:
-        sheet = conectar_google_sheet()
-        df = cargar_datos(sheet)
+    # --- LÓGICA DE PÁGINAS ---
+    
+    # ---------------------------------------------------------
+    # PÁGINA 1: GESTIÓN ACTIVA (EDITABLE)
+    # ---------------------------------------------------------
+    if menu_seleccion == "Gestión Activa":
+        st.title("📊 Gestión del Día")
         
-        # --- FILTRADO ---
-        if es_admin:
-            st.success("🛡️ Modo Administrador Activo")
-            filtro_sucursal = st.selectbox("Filtrar por Sucursal", ["Todas"] + list(df['Sucursal'].unique()))
-            if filtro_sucursal != "Todas":
-                df_filtrado = df[df['Sucursal'] == filtro_sucursal].copy()
+        try:
+            # Conectamos a la pestaña 'Clientes'
+            sheet = conectar_google_sheet(TAB_CLIENTES)
+            df = cargar_datos(sheet)
+            
+            # FILTRADO
+            if es_admin:
+                st.success("🛡️ Modo Administrador")
+                filtro_sucursal = st.selectbox("Filtrar por Sucursal", ["Todas"] + list(df['Sucursal'].unique()))
+                df_filtrado = df[df['Sucursal'] == filtro_sucursal].copy() if filtro_sucursal != "Todas" else df.copy()
             else:
-                df_filtrado = df.copy()
-        else:
-            if 'Email_Gerente' in df.columns:
-                df_filtrado = df[df['Email_Gerente'] == user_email].copy()
-            else:
-                st.error("⚠️ Error: No encuentro la columna 'Email_Gerente'.")
-                st.stop()
+                if 'Email_Gerente' in df.columns:
+                    df_filtrado = df[df['Email_Gerente'] == user_email].copy()
+                else:
+                    st.error("Error: Columna Email_Gerente no encontrada.")
+                    st.stop()
 
-        if not df_filtrado.empty:
-            
-            # Corrección Teléfono
-            if 'Telefono' in df_filtrado.columns:
-                df_filtrado['Telefono'] = df_filtrado['Telefono'].astype(str)
-            
-            # --- KPI & GRÁFICAS ---
-            col_monto = 'Monto desembolsar' if 'Monto desembolsar' in df_filtrado.columns else 'Monto Desembolsar'
-            df_filtrado['Monto_Num'] = df_filtrado[col_monto].apply(limpiar_moneda)
-            
-            total_clientes = len(df_filtrado)
-            total_dinero = df_filtrado['Monto_Num'].sum()
-            conteo_status = df_filtrado['Status'].value_counts().reset_index()
-            conteo_status.columns = ['Estado', 'Cantidad']
-            
-            # Diseño de Tarjetas KPI
-            kpi1, kpi2, kpi3 = st.columns(3)
-            kpi1.metric("📂 Clientes Totales", total_clientes)
-            kpi2.metric("💰 Dinero Desembolsado", f"C$ {total_dinero:,.2f}")
-            
-            desembolsados = len(df_filtrado[df_filtrado['Status'] == 'Desembolsado'])
-            tasa = (desembolsados / total_clientes * 100) if total_clientes > 0 else 0
-            kpi3.metric("📈 Tasa de Aprobación", f"{tasa:.1f}%")
-            
-            st.markdown("---")
-            
-            # Gráficos con tema oscuro
-            g1, g2 = st.columns(2)
-            with g1:
-                st.subheader("Distribución por Estado")
-                fig_pie = px.pie(
-                    conteo_status, 
-                    values='Cantidad', 
-                    names='Estado', 
-                    hole=0.4,
-                    color_discrete_sequence=px.colors.sequential.Greens_r # Verdes
-                )
-                fig_pie.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
-                st.plotly_chart(fig_pie, use_container_width=True)
+            if not df_filtrado.empty:
+                # KPIs
+                col_monto = 'Monto desembolsar' if 'Monto desembolsar' in df_filtrado.columns else 'Monto Desembolsar'
+                df_filtrado['Monto_Num'] = df_filtrado[col_monto].apply(limpiar_moneda)
                 
-            with g2:
-                st.subheader("Cantidad de Clientes")
-                fig_bar = px.bar(
-                    conteo_status, 
-                    x='Estado', 
-                    y='Cantidad', 
-                    color='Estado',
-                    color_discrete_sequence=px.colors.sequential.Greens_r
-                )
-                fig_bar.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
-                st.plotly_chart(fig_bar, use_container_width=True)
+                kpi1, kpi2, kpi3 = st.columns(3)
+                kpi1.metric("Clientes Activos", len(df_filtrado))
+                kpi2.metric("Monto Desembolsado", f"C$ {df_filtrado['Monto_Num'].sum():,.2f}")
+                desembolsados = len(df_filtrado[df_filtrado['Status'] == 'Desembolsado'])
+                tasa = (desembolsados / len(df_filtrado) * 100) if len(df_filtrado) > 0 else 0
+                kpi3.metric("Efectividad", f"{tasa:.1f}%")
+                
+                st.markdown("---")
+                
+                # GRÁFICOS
+                g1, g2 = st.columns(2)
+                conteo_status = df_filtrado['Status'].value_counts().reset_index()
+                conteo_status.columns = ['Estado', 'Cantidad']
+                
+                with g1:
+                    fig_pie = px.pie(conteo_status, values='Cantidad', names='Estado', hole=0.4, color_discrete_sequence=px.colors.sequential.Greens_r)
+                    fig_pie.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                with g2:
+                    fig_bar = px.bar(conteo_status, x='Estado', y='Cantidad', color='Estado', color_discrete_sequence=px.colors.sequential.Greens_r)
+                    fig_bar.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
+                    st.plotly_chart(fig_bar, use_container_width=True)
 
-            st.markdown("---")
-            st.subheader("📝 Gestión de Clientes")
+                st.subheader("📝 Edición de Datos")
+                
+                # TABLA EDITABLE
+                column_config = {
+                    "Status": st.column_config.SelectboxColumn("Status", options=["Proceso", "Denegado", "Desembolsado", "Pendiente"], required=True),
+                    "Monto desembolsar": st.column_config.NumberColumn("Monto Desembolso", format="C$ %.2f")
+                }
+                cols_bloqueadas = ["Agente Call Center", "Fecha Reporte", "Nombre_Completo", "Tipo de credito", "Telefono", "Direccion_Negocio", "Tipo_Negocio", "Email_Gerente", "Sucursal", "Monto Solicitado"]
+                bloqueo = False if es_admin else True
+                for col in cols_bloqueadas:
+                    column_config[col] = st.column_config.TextColumn(disabled=bloqueo)
 
-            # --- CONFIGURACIÓN DE TABLA ---
-            column_config = {
-                "Status": st.column_config.SelectboxColumn(
-                    "Status",
-                    options=["Proceso", "Denegado", "Desembolsado", "Pendiente"],
-                    required=True
-                ),
-                "Monto desembolsar": st.column_config.NumberColumn("Monto Desembolso", format="C$ %.2f")
-            }
-
-            cols_bloqueadas_gerente = [
-                "Agente Call Center", "Fecha Reporte", "Nombre_Completo", 
-                "Tipo de credito", "Telefono", "Direccion_Negocio", 
-                "Tipo_Negocio", "Email_Gerente", "Sucursal", "Monto Solicitado"
-            ]
-
-            estado_bloqueo = False if es_admin else True
-
-            for col in cols_bloqueadas_gerente:
-                column_config[col] = st.column_config.TextColumn(disabled=estado_bloqueo)
-
-            df_editado = st.data_editor(
-                df_filtrado,
-                column_config=column_config,
-                num_rows="fixed",
-                hide_index=True,
-                use_container_width=True,
-                height=500
-            )
-            
-            col_btn, _ = st.columns([1, 4])
-            with col_btn:
+                df_editado = st.data_editor(df_filtrado, column_config=column_config, num_rows="fixed", hide_index=True, use_container_width=True, height=500)
+                
                 if st.button("💾 GUARDAR CAMBIOS", type="primary"):
                     if not df_editado.equals(df_filtrado):
                         guardar_cambios(sheet, df_editado, es_admin)
                     else:
-                        st.info("No hay cambios pendientes.")
-        else:
-            st.warning("📭 No tienes clientes asignados actualmente.")
+                        st.info("No hay cambios.")
+            else:
+                st.warning("No tienes clientes activos.")
 
-    except Exception as e:
-        st.error(f"Error del sistema: {e}")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    # ---------------------------------------------------------
+    # PÁGINA 2: HISTÓRICO (SOLO LECTURA)
+    # ---------------------------------------------------------
+    elif menu_seleccion == "Histórico de Clientes":
+        st.title("📂 Histórico de Operaciones")
+        st.markdown("Consulta de registros antiguos. **(Modo Solo Lectura)**")
+        
+        try:
+            # Conectamos a la pestaña 'Historico'
+            # Asegúrate que la variable TAB_HISTORICO tenga el nombre exacto de tu hoja
+            sheet_hist = conectar_google_sheet(TAB_HISTORICO)
+            df_hist = cargar_datos(sheet_hist)
+            
+            # APLICAMOS LA MISMA SEGURIDAD DE FILTRADO
+            if es_admin:
+                sucursales_hist = ["Todas"] + list(df_hist['Sucursal'].unique()) if 'Sucursal' in df_hist.columns else ["Todas"]
+                filtro_hist = st.selectbox("Filtrar Histórico por Sucursal", sucursales_hist)
+                if filtro_hist != "Todas":
+                    df_view = df_hist[df_hist['Sucursal'] == filtro_hist]
+                else:
+                    df_view = df_hist
+            else:
+                if 'Email_Gerente' in df_hist.columns:
+                    df_view = df_hist[df_hist['Email_Gerente'] == user_email]
+                else:
+                    st.error("El Histórico no tiene columna 'Email_Gerente' para filtrar.")
+                    df_view = pd.DataFrame()
+
+            if not df_view.empty:
+                st.info(f"Mostrando {len(df_view)} registros históricos.")
+                
+                # Buscador simple
+                busqueda = st.text_input("🔍 Buscar cliente en histórico (Nombre, Cédula, Teléfono...)", "")
+                if busqueda:
+                    mask = df_view.apply(lambda x: x.astype(str).str.contains(busqueda, case=False).any(), axis=1)
+                    df_view = df_view[mask]
+
+                # Usamos st.dataframe en lugar de data_editor para que NO SE PUEDA EDITAR
+                st.dataframe(
+                    df_view, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    height=600
+                )
+            else:
+                st.warning("No se encontraron registros en el histórico.")
+                
+        except Exception as e:
+            st.error(f"No se pudo cargar el histórico. Verifica que la pestaña se llame '{TAB_HISTORICO}' en el Excel. Error: {e}")
