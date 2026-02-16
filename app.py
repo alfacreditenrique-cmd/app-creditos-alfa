@@ -3,6 +3,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+import plotly.express as px  # <--- NUEVA LIBRERÍA PARA GRÁFICAS
 
 # --- CONFIGURACIÓN ---
 SCOPES = [
@@ -10,8 +11,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 CREDS_FILE = 'credenciales.json'
-SHEET_NAME = 'base de datos'  
-TAB_NAME = 'Clientes'         
+SHEET_NAME = 'base de datos'
+TAB_NAME = 'Clientes'
 
 # --- USUARIOS (Contraseña 1234) ---
 USUARIOS = {
@@ -32,20 +33,16 @@ USUARIOS = {
 # --- FUNCIONES ---
 
 def conectar_google_sheet():
-    # LÓGICA HÍBRIDA: Funciona en Nube (Secrets) y en Local (Archivo)
     try:
-        # Intentamos buscar en los secretos de Streamlit (NUBE)
         if "gcp_service_account" in st.secrets:
             creds_dict = st.secrets["gcp_service_account"]
             creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         else:
-            # Si no hay secretos, buscamos el archivo (LOCAL)
             creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
             
         client = gspread.authorize(creds)
         sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
         return sheet
-        
     except Exception as e:
         st.error(f"Error de conexión: {e}")
         st.stop()
@@ -55,27 +52,35 @@ def cargar_datos(sheet):
     df = pd.DataFrame(data)
     return df
 
+def limpiar_moneda(valor):
+    """Convierte texto como 'C$ 5,000' a número 5000.0"""
+    if isinstance(valor, str):
+        # Quitamos símbolo, comas y espacios
+        limpio = valor.replace('C$', '').replace(',', '').strip()
+        if limpio == '': return 0.0
+        try:
+            return float(limpio)
+        except:
+            return 0.0
+    return float(valor or 0)
+
 def guardar_cambios(sheet, df_editado):
     st.info("Sincronizando con Google Sheets...")
     errores = 0
     
     for i, row in df_editado.iterrows():
-        # +2 porque gspread es base-1 y hay encabezado
         row_num = i + 2
-        
         try:
             val_status = row.get('Status', '')
             val_justif = row.get('Justificacion', row.get('Justificación', ''))
             val_asig = row.get('Asignado_Colaborador', '')
             val_monto = row.get('Monto desembolsar', row.get('Monto Desembolsar', ''))
             
-            # Actualizamos celdas (K, L, M, N)
             sheet.update_cell(row_num, 11, val_status)  
             sheet.update_cell(row_num, 12, val_justif)  
             sheet.update_cell(row_num, 13, val_asig)    
             sheet.update_cell(row_num, 14, val_monto)   
             
-            # Fecha Actualización (Col O)
             fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             sheet.update_cell(row_num, 15, fecha_actual)
             
@@ -85,14 +90,14 @@ def guardar_cambios(sheet, df_editado):
             
     if errores == 0:
         st.success("¡Datos actualizados correctamente!")
-        st.rerun() # Recargar para ver cambios
+        st.rerun()
     else:
         st.warning(f"Se completó con {errores} errores.")
 
 # --- INTERFAZ ---
 
-st.set_page_config(page_title="Gestión de Créditos", layout="wide")
-st.title("Sistema de Gestión de Créditos")
+st.set_page_config(page_title="Dashboard Créditos", layout="wide")
+st.title("📊 Dashboard de Gestión de Créditos")
 
 # 1. LOGIN
 if 'logueado' not in st.session_state:
@@ -123,9 +128,8 @@ else:
     user_data = st.session_state['datos_usuario']
     es_admin = user_data['rol'] == 'admin'
     
-    st.sidebar.markdown(f"**Usuario:** {user_email}")
-    st.sidebar.markdown(f"**Rol:** {user_data['sucursal']}")
-    
+    # Barra lateral
+    st.sidebar.title(f"👤 {user_data['sucursal']}")
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state['logueado'] = False
         st.rerun()
@@ -134,9 +138,9 @@ else:
         sheet = conectar_google_sheet()
         df = cargar_datos(sheet)
         
-        # --- FILTRADO ---
+        # --- FILTRADO DE DATOS ---
         if es_admin:
-            st.info("Modo Administrador: Viendo todos los registros.")
+            st.info("Vista de Administrador: Acceso Total")
             filtro_sucursal = st.selectbox("Filtrar por Sucursal", ["Todas"] + list(df['Sucursal'].unique()))
             if filtro_sucursal != "Todas":
                 df_filtrado = df[df['Sucursal'] == filtro_sucursal].copy()
@@ -150,7 +154,51 @@ else:
                 st.stop()
 
         if not df_filtrado.empty:
-            # Configuración de columnas
+            
+            # --- SECCIÓN DE MÉTRICAS Y GRÁFICAS (NUEVO) ---
+            
+            # 1. Limpieza de datos para cálculos
+            # Creamos una columna temporal numérica para sumar el dinero
+            col_monto = 'Monto desembolsar' if 'Monto desembolsar' in df_filtrado.columns else 'Monto Desembolsar'
+            df_filtrado['Monto_Num'] = df_filtrado[col_monto].apply(limpiar_moneda)
+            
+            # 2. Cálculos
+            total_clientes = len(df_filtrado)
+            total_dinero = df_filtrado['Monto_Num'].sum()
+            conteo_status = df_filtrado['Status'].value_counts().reset_index()
+            conteo_status.columns = ['Estado', 'Cantidad']
+            
+            # 3. Tarjetas de Resumen (KPIs)
+            kpi1, kpi2, kpi3 = st.columns(3)
+            kpi1.metric("Clientes Totales", total_clientes)
+            kpi2.metric("Dinero Desembolsado (Aprox)", f"C$ {total_dinero:,.2f}")
+            
+            # KPI 3: Tasa de Aprobación
+            desembolsados = len(df_filtrado[df_filtrado['Status'] == 'Desembolsado'])
+            tasa = (desembolsados / total_clientes * 100) if total_clientes > 0 else 0
+            kpi3.metric("Tasa de Desembolso", f"{tasa:.1f}%")
+            
+            st.markdown("---")
+            
+            # 4. Gráficos
+            g1, g2 = st.columns(2)
+            
+            with g1:
+                st.subheader("Distribución por Estado")
+                # Gráfico de Pastel
+                fig_pie = px.pie(conteo_status, values='Cantidad', names='Estado', hole=0.4)
+                st.plotly_chart(fig_pie, use_container_width=True)
+                
+            with g2:
+                st.subheader("Cantidad de Clientes")
+                # Gráfico de Barras
+                fig_bar = px.bar(conteo_status, x='Estado', y='Cantidad', color='Estado')
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("📋 Edición de Datos")
+
+            # --- TABLA DE EDICIÓN (IGUAL QUE ANTES) ---
             column_config = {
                 "Email_Gerente": st.column_config.TextColumn(disabled=True),
                 "Sucursal": st.column_config.TextColumn(disabled=True),
@@ -160,10 +208,8 @@ else:
                     options=["Proceso", "Denegado", "Desembolsado", "Pendiente"],
                     required=True
                 ),
-                "Monto desembolsar": st.column_config.NumberColumn("Monto Desembolso")
+                "Monto desembolsar": st.column_config.NumberColumn("Monto Desembolso", format="C$ %.2f")
             }
-
-            st.write(f"Mostrando {len(df_filtrado)} registros.")
             
             df_editado = st.data_editor(
                 df_filtrado,
@@ -174,7 +220,7 @@ else:
                 height=500
             )
             
-            if st.button("Guardar Cambios"):
+            if st.button("Guardar Cambios", type="primary"):
                 if not df_editado.equals(df_filtrado):
                     guardar_cambios(sheet, df_editado)
                 else:
