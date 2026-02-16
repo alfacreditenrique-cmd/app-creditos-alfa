@@ -47,6 +47,7 @@ def conectar_google_sheet():
 
 def cargar_datos(sheet):
     data = sheet.get_all_records()
+    # Convertimos todo a string al cargar para evitar conflictos iniciales
     df = pd.DataFrame(data)
     return df
 
@@ -67,21 +68,17 @@ def guardar_cambios(sheet, df_editado, es_admin):
     for i, row in df_editado.iterrows():
         row_num = i + 2
         try:
-            # 1. ACTUALIZACIÓN ESTÁNDAR (Lo que tocan los Gerentes)
-            # Columnas K, L, M, N (Indices 11, 12, 13, 14)
+            # 1. ACTUALIZACIÓN ESTÁNDAR (Gerentes)
             sheet.update_cell(row_num, 11, row.get('Status', ''))  
             sheet.update_cell(row_num, 12, row.get('Justificacion', row.get('Justificación', '')))  
             sheet.update_cell(row_num, 13, row.get('Asignado_Colaborador', ''))    
             sheet.update_cell(row_num, 14, row.get('Monto desembolsar', row.get('Monto Desembolsar', '')))   
             
-            # Fecha Actualización (Col O -> 15)
             fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             sheet.update_cell(row_num, 15, fecha_actual)
 
-            # 2. ACTUALIZACIÓN DE ADMIN (Si el admin cambia nombres, teléfonos, etc.)
+            # 2. ACTUALIZACIÓN DE ADMIN
             if es_admin:
-                # Actualizamos columnas A-J solo si es Admin para evitar lentitud innecesaria
-                # Mapeo basado en tu imagen:
                 sheet.update_cell(row_num, 1, row.get('Agente Call Center', ''))
                 sheet.update_cell(row_num, 2, row.get('Fecha Reporte', ''))
                 sheet.update_cell(row_num, 3, row.get('Nombre_Completo', ''))
@@ -89,7 +86,6 @@ def guardar_cambios(sheet, df_editado, es_admin):
                 sheet.update_cell(row_num, 5, row.get('Telefono', ''))
                 sheet.update_cell(row_num, 6, row.get('Direccion_Negocio', ''))
                 sheet.update_cell(row_num, 7, row.get('Tipo_Negocio', ''))
-                # Email y Sucursal (8 y 9) y Monto Solicitado (10)
                 sheet.update_cell(row_num, 10, row.get('Monto Solicitado', ''))
             
         except Exception as e:
@@ -162,6 +158,11 @@ else:
 
         if not df_filtrado.empty:
             
+            # --- CORRECCIÓN DE TIPOS DE DATOS (SOLUCIÓN DEL ERROR) ---
+            # Forzamos que el Teléfono sea tratado como TEXTO, no como NÚMERO
+            if 'Telefono' in df_filtrado.columns:
+                df_filtrado['Telefono'] = df_filtrado['Telefono'].astype(str)
+            
             # --- KPI & GRÁFICAS ---
             col_monto = 'Monto desembolsar' if 'Monto desembolsar' in df_filtrado.columns else 'Monto Desembolsar'
             df_filtrado['Monto_Num'] = df_filtrado[col_monto].apply(limpiar_moneda)
@@ -195,7 +196,6 @@ else:
 
             # --- CONFIGURACIÓN DE COLUMNAS (PERMISOS) ---
             
-            # 1. Definimos las columnas base (Editables K+)
             column_config = {
                 "Status": st.column_config.SelectboxColumn(
                     "Status",
@@ -205,21 +205,18 @@ else:
                 "Monto desembolsar": st.column_config.NumberColumn("Monto Desembolso", format="C$ %.2f")
             }
 
-            # 2. Lista de Columnas que los Gerentes NO deben tocar (A-J)
-            # Asegúrate que los nombres sean EXACTOS a los de tu Excel
             cols_bloqueadas_gerente = [
                 "Agente Call Center", "Fecha Reporte", "Nombre_Completo", 
                 "Tipo de credito", "Telefono", "Direccion_Negocio", 
                 "Tipo_Negocio", "Email_Gerente", "Sucursal", "Monto Solicitado"
             ]
 
-            # 3. Aplicamos la lógica: Si es Admin -> False (Editable), Si es Gerente -> True (Bloqueado)
             estado_bloqueo = False if es_admin else True
 
             for col in cols_bloqueadas_gerente:
+                # Aquí forzamos que sea TextColumn. Como ya convertimos los datos a str arriba, ya no dará error.
                 column_config[col] = st.column_config.TextColumn(disabled=estado_bloqueo)
 
-            # Mostramos la tabla
             df_editado = st.data_editor(
                 df_filtrado,
                 column_config=column_config,
@@ -231,7 +228,6 @@ else:
             
             if st.button("Guardar Cambios", type="primary"):
                 if not df_editado.equals(df_filtrado):
-                    # Pasamos 'es_admin' a la función para saber si guardamos todo o solo status
                     guardar_cambios(sheet, df_editado, es_admin)
                 else:
                     st.info("No hay cambios pendientes.")
