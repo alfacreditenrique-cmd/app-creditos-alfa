@@ -101,40 +101,48 @@ def limpiar_moneda(valor):
     return float(valor or 0)
 
 def guardar_cambios(sheet, df_editado, es_admin):
-    with st.spinner('🔄 Sincronizando con base de datos AlfaCredit...'):
-        errores = 0
-        for i, row in df_editado.iterrows():
-            row_num = i + 2
-            try:
-                # Actualización Estándar
-                sheet.update_cell(row_num, 11, row.get('Status', ''))  
-                sheet.update_cell(row_num, 12, row.get('Justificacion', row.get('Justificación', '')))  
-                sheet.update_cell(row_num, 13, row.get('Asignado_Colaborador', ''))    
-                sheet.update_cell(row_num, 14, row.get('Monto desembolsar', row.get('Monto Desembolsar', '')))   
+    """Función de guardado masivo (Batch Update) para evitar límite de cuota"""
+    with st.spinner('🔄 Empaquetando y guardando datos en AlfaCredit...'):
+        try:
+            celdas_a_actualizar = []
+            
+            for i, row in df_editado.iterrows():
+                row_num = i + 2
                 
+                # Empaquetamos actualizaciones Estándar
+                celdas_a_actualizar.append(gspread.Cell(row_num, 11, str(row.get('Status', ''))))
+                celdas_a_actualizar.append(gspread.Cell(row_num, 12, str(row.get('Justificacion', row.get('Justificación', '')))))
+                celdas_a_actualizar.append(gspread.Cell(row_num, 13, str(row.get('Asignado_Colaborador', ''))))
+                
+                # Monto
+                monto = row.get('Monto desembolsar', row.get('Monto Desembolsar', ''))
+                monto_str = str(monto) if pd.notna(monto) else ''
+                celdas_a_actualizar.append(gspread.Cell(row_num, 14, monto_str))
+                
+                # Fecha Actualización
                 fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                sheet.update_cell(row_num, 15, fecha_actual)
+                celdas_a_actualizar.append(gspread.Cell(row_num, 15, fecha_actual))
 
-                # Actualización Admin
+                # Empaquetamos actualizaciones Admin
                 if es_admin:
-                    sheet.update_cell(row_num, 1, row.get('Agente Call Center', ''))
-                    sheet.update_cell(row_num, 2, row.get('Fecha Reporte', ''))
-                    sheet.update_cell(row_num, 3, row.get('Nombre_Completo', ''))
-                    sheet.update_cell(row_num, 4, row.get('Tipo de credito', ''))
-                    sheet.update_cell(row_num, 5, row.get('Telefono', ''))
-                    sheet.update_cell(row_num, 6, row.get('Direccion_Negocio', ''))
-                    sheet.update_cell(row_num, 7, row.get('Tipo_Negocio', ''))
-                    sheet.update_cell(row_num, 10, row.get('Monto Solicitado', ''))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 1, str(row.get('Agente Call Center', ''))))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 2, str(row.get('Fecha Reporte', ''))))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 3, str(row.get('Nombre_Completo', ''))))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 4, str(row.get('Tipo de credito', ''))))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 5, str(row.get('Telefono', ''))))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 6, str(row.get('Direccion_Negocio', ''))))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 7, str(row.get('Tipo_Negocio', ''))))
+                    celdas_a_actualizar.append(gspread.Cell(row_num, 10, str(row.get('Monto Solicitado', ''))))
+            
+            # Ejecutamos la actualización por lotes
+            if celdas_a_actualizar:
+                sheet.update_cells(celdas_a_actualizar)
                 
-            except Exception as e:
-                errores += 1
-                st.error(f"Error en fila {row_num}: {e}")
-                
-        if errores == 0:
-            st.success("✅ ¡Datos actualizados correctamente!")
+            st.success("✅ ¡Datos actualizados masivamente de forma correcta!")
             st.rerun()
-        else:
-            st.warning(f"⚠️ Se completó con {errores} errores.")
+            
+        except Exception as e:
+            st.error(f"⚠️ Error al actualizar el lote de datos: {e}")
 
 # --- INTERFAZ ---
 
@@ -286,7 +294,6 @@ else:
             
             # FILTRADO HISTÓRICO
             if es_admin:
-                # Verificamos si existe la columna Sucursal antes de intentar filtrar
                 if 'Sucursal' in df_hist.columns:
                     sucursales_hist = ["Todas"] + list(df_hist['Sucursal'].unique())
                     filtro_hist = st.selectbox("Filtrar Histórico por Sucursal", sucursales_hist)
@@ -302,12 +309,9 @@ else:
                     df_view = pd.DataFrame()
 
             if not df_view.empty:
-                # --- AQUÍ AGREGAMOS LOS GRÁFICOS AL HISTÓRICO ---
-                
-                # 1. CÁLCULOS KPI (Igual que en activa)
+                # 1. CÁLCULOS KPI
                 col_monto_hist = 'Monto desembolsar' if 'Monto desembolsar' in df_view.columns else 'Monto Desembolsar'
                 
-                # Verificamos si existe la columna de montos antes de calcular
                 if col_monto_hist in df_view.columns:
                     df_view['Monto_Num'] = df_view[col_monto_hist].apply(limpiar_moneda)
                     total_dinero_hist = df_view['Monto_Num'].sum()
